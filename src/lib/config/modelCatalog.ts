@@ -7,37 +7,54 @@ export type ModelCatalogEntry = {
   tags: string[];
 };
 
+/**
+ * Current OpenRouter models, newest generation per provider (checked 2026-10-19).
+ * Each provider has at most one "frontier" model; those are the judge candidates.
+ */
 export const MODEL_CATALOG: ModelCatalogEntry[] = [
-    // OpenAI (5)
-    { id: "openai/gpt-5.2",            label: "GPT-5.2",            provider: "OpenAI",    defaultChecked: true,  tags: ["frontier", "reasoning"] },
-    { id: "openai/gpt-5-mini",         label: "GPT-5 Mini",         provider: "OpenAI",    defaultChecked: true,  tags: ["fast", "cheap"] },
-    { id: "openai/gpt-4.1",            label: "GPT-4.1",            provider: "OpenAI",    defaultChecked: true,  tags: ["strong", "reliable"] },
-    { id: "openai/gpt-4o",             label: "GPT-4o",             provider: "OpenAI",    defaultChecked: true,  tags: ["multimodal", "general"] },
-    { id: "openai/o3",                 label: "o3",                 provider: "OpenAI",    defaultChecked: true,  tags: ["reasoning"] },
-  
+    // OpenAI (3)
+    { id: "openai/gpt-6-astra",        label: "GPT-6 Astra",        provider: "OpenAI",    defaultChecked: true,  tags: ["frontier", "reasoning"] },
+    { id: "openai/gpt-6.1-sol",        label: "GPT-6.1 Sol",        provider: "OpenAI",    defaultChecked: true,  tags: ["strong", "value"] },
+    { id: "openai/gpt-6-luna",         label: "GPT-6 Luna",         provider: "OpenAI",    defaultChecked: true,  tags: ["fast", "cheap"] },
+
     // Anthropic (4)
-    { id: "anthropic/claude-opus-4.1",  label: "Claude Opus 4.1",    provider: "Anthropic", defaultChecked: true,  tags: ["frontier", "reasoning"] },
-    { id: "anthropic/claude-sonnet-4.5",label: "Claude Sonnet 4.5",  provider: "Anthropic", defaultChecked: true,  tags: ["coding"] },
-    { id: "anthropic/claude-sonnet-4",  label: "Claude Sonnet 4",    provider: "Anthropic", defaultChecked: true,  tags: ["strong"] },
-    { id: "anthropic/claude-3.7-sonnet",label: "Claude 3.7 Sonnet",  provider: "Anthropic", defaultChecked: true,  tags: ["strong", "value"] },
-  
+    { id: "anthropic/claude-opus-5.5",  label: "Claude Opus 5.5",    provider: "Anthropic", defaultChecked: true,  tags: ["frontier", "reasoning"] },
+    { id: "anthropic/claude-fable-5.1", label: "Claude Fable 5.1",   provider: "Anthropic", defaultChecked: true,  tags: ["reasoning"] },
+    { id: "anthropic/claude-sonnet-5.5",label: "Claude Sonnet 5.5",  provider: "Anthropic", defaultChecked: true,  tags: ["strong"] },
+    { id: "anthropic/claude-haiku-5.5", label: "Claude Haiku 5.5",   provider: "Anthropic", defaultChecked: true,  tags: ["fast", "cheap"] },
+
     // Google (4)
-    { id: "google/gemini-3-pro-preview",label: "Gemini 3 Pro (preview)", provider: "Google", defaultChecked: true,  tags: ["frontier", "multimodal", "preview"] },
+    { id: "google/gemini-4-argon",      label: "Gemini 4 Argon",     provider: "Google",    defaultChecked: true,  tags: ["frontier", "reasoning"] },
+    { id: "google/gemini-3.8-flash",    label: "Gemini 3.8 Flash",   provider: "Google",    defaultChecked: false, tags: ["fast", "value"] },
+    { id: "google/gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite", provider: "Google", defaultChecked: false, tags: ["fast", "cheap"] },
     { id: "google/gemini-3-flash-preview", label: "Gemini 3 Flash (preview)", provider: "Google", defaultChecked: false, tags: ["fast", "preview"] },
-    { id: "google/gemini-2.5-pro",      label: "Gemini 2.5 Pro",     provider: "Google",    defaultChecked: false, tags: ["strong"] },
-    { id: "google/gemini-2.5-flash",    label: "Gemini 2.5 Flash",   provider: "Google",    defaultChecked: false, tags: ["fast", "value"] },
-  
-    // Mistral (4)
-    { id: "mistralai/mistral-large",    label: "Mistral Large",      provider: "Mistral",   defaultChecked: false, tags: ["strong"] },
-    { id: "mistralai/mistral-medium-3.1",label:"Mistral Medium 3.1", provider: "Mistral",   defaultChecked: false, tags: ["value"] },
-    { id: "mistralai/mistral-small-3.1-24b-instruct", label: "Mistral Small 3.1 24B", provider: "Mistral", defaultChecked: false, tags: ["cheap", "solid"] },
-    { id: "mistralai/mixtral-8x22b-instruct", label: "Mixtral 8x22B Instruct", provider: "Mistral", defaultChecked: false, tags: ["open", "moe"] },
-  
-    // Meta (3)
-    { id: "meta-llama/llama-4-maverick",label: "Llama 4 Maverick",   provider: "Meta",      defaultChecked: false, tags: ["open", "moe"] },
-    { id: "meta-llama/llama-4-scout",   label: "Llama 4 Scout",      provider: "Meta",      defaultChecked: false, tags: ["open"] },
-    { id: "meta-llama/llama-3.1-405b-instruct", label: "Llama 3.1 405B Instruct", provider: "Meta", defaultChecked: false, tags: ["open", "huge"] },
+
+    // Meta (2)
+    { id: "meta/muse-wonder",           label: "Muse Wonder",        provider: "Meta",      defaultChecked: false, tags: ["frontier", "reasoning"] },
+    { id: "meta/muse-spark-1.3",        label: "Muse Spark 1.3",     provider: "Meta",      defaultChecked: false, tags: ["value"] },
+
+    // SpaceXAI (1)
+    { id: "x-ai/grok-4.7",              label: "Grok 4.7",           provider: "SpaceXAI",  defaultChecked: false, tags: ["strong"] },
+
+    // DeepSeek (3)
+    { id: "deepseek/deepseek-v4.1-flash-1017", label: "DeepSeek V4.1 Flash", provider: "DeepSeek", defaultChecked: false, tags: ["open", "value"] },
+    { id: "deepseek/deepseek-v4-pro-0813",     label: "DeepSeek V4 Pro",     provider: "DeepSeek", defaultChecked: false, tags: ["open", "strong"] },
+    { id: "deepseek/deepseek-v4-flash-0731",   label: "DeepSeek V4 Flash (0731)", provider: "DeepSeek", defaultChecked: false, tags: ["open", "cheap"] },
+
+    // Other providers (6)
+    { id: "mistralai/mistral-large-4-0", label: "Mistral Large 4",   provider: "Mistral",   defaultChecked: false, tags: ["strong"] },
+    { id: "qwen/qwen3.8-max-0902",      label: "Qwen3.8 Max",        provider: "Alibaba",   defaultChecked: false, tags: ["strong"] },
+    { id: "moonshotai/kimi-k3",         label: "Kimi K3",            provider: "Moonshot AI", defaultChecked: false, tags: ["open", "reasoning"] },
+    { id: "z-ai/glm-5.3",               label: "GLM-5.3",            provider: "Z.ai",      defaultChecked: false, tags: ["open", "value"] },
+    { id: "xiaomi/mimo-v2.6-pro",       label: "MiMo-V2.6-Pro",      provider: "Xiaomi",    defaultChecked: false, tags: ["open", "value"] },
+    { id: "inception/mercury-3",        label: "Mercury 3",          provider: "Inception", defaultChecked: false, tags: ["fast", "diffusion"] },
 ];
 
-/** Frontier models for judging (GPT-5.2, Claude Opus 4.1, Gemini 3 Pro); default-select all 3 in the UI. */
+/** Judge candidates: one frontier model per provider (GPT-6 Astra, Claude Opus 5.5, Gemini 4 Argon, Muse Wonder). */
 export const JUDGE_MODELS = MODEL_CATALOG.filter((m) => m.tags.includes("frontier"));
+
+/** Most judges a single run may use: one per frontier provider. */
+export const MAX_JUDGES = 4;
+
+/** Judges selected by default: all four, so no single provider's blind spots decide a score. */
+export const DEFAULT_JUDGE_MODELS = JUDGE_MODELS.slice(0, MAX_JUDGES);

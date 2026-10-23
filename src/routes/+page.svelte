@@ -1,33 +1,36 @@
 <script lang="ts">
 	import { onMount } from "svelte";
-	import { page } from "$app/stores";
+	import { page } from "$app/state";
 	import { beforeNavigate, afterNavigate, goto } from "$app/navigation";
-	import { MODEL_CATALOG, JUDGE_MODELS } from "$lib/config/modelCatalog";
-	import { ASSUMED_TOKEN_SIZES, COST_ESTIMATE_SAFETY_FACTOR } from "$lib/config/constants";
+	import { resolve } from "$app/paths";
+	import { MODEL_CATALOG, JUDGE_MODELS, DEFAULT_JUDGE_MODELS, MAX_JUDGES } from "#lib/config/modelCatalog.js";
+	import { ASSUMED_TOKEN_SIZES, COST_ESTIMATE_SAFETY_FACTOR, JUDGE_OUTPUT_TOKENS_AT_HIGHEST_EFFORT } from "#lib/config/constants.js";
+	import { effortChoices, isReasoningEffort } from "#lib/config/reasoning.js";
+	import type { ReasoningEffort } from "#lib/config/reasoning.js";
 	import {
 		DEFAULT_GENERATION_PROMPT_TEMPLATE,
 		buildTestPromptFromTemplate,
 		buildGenerationPromptFromExpanded,
-	} from "$lib/prompts/test";
-	import { QUIZ_SCHEMA_JSON } from "$lib/schemas/quiz-schema";
+	} from "#lib/prompts/test.js";
+	import { QUIZ_SCHEMA_JSON } from "#lib/schemas/quiz-schema.js";
 	import {
 		DEFAULT_JUDGE_PROMPT_TEMPLATE,
 		JUDGE_RESPONSE_SCHEMA_JSON,
 		buildJudgePromptFromTemplate,
-	} from "$lib/prompts/judge";
+	} from "#lib/prompts/judge.js";
 	import {
 		DEFAULT_ENRICHMENT_PROMPT_TEMPLATE,
 		buildEnrichmentPromptFromTemplate,
-	} from "$lib/prompts/enrichment";
-	import { parseQuiz, validateQuizSchema } from "$lib/validation/quiz";
-	import { parseJudgeResponse } from "$lib/validation/judge";
-	import { computeModelAggregates, computeRunQualityFromJudges, getNormalizedScores } from "$lib/run-aggregates";
-	import { isQuizEvalResponse } from "$lib/types/judge";
-	import { saveRun, updateRun } from "$lib/db/runs";
-	import { listUserModels, addUserModel, deleteUserModel } from "$lib/db/userModels";
-	import type { UserModel } from "$lib/db/userModels";
-	import type { ModelResult, RunPayload, SingleRun } from "$lib/types/run";
-	import type { OpenRouterModelInfo } from "$lib/types/models";
+	} from "#lib/prompts/enrichment.js";
+	import { parseQuiz, validateQuizSchema } from "#lib/validation/quiz.js";
+	import { parseJudgeResponse } from "#lib/validation/judge.js";
+	import { computeModelAggregates, computeRunQualityFromJudges, getNormalizedScores } from "#lib/run-aggregates.js";
+	import { isQuizEvalResponse } from "#lib/types/judge.js";
+	import { saveRun, updateRun } from "#lib/db/runs.js";
+	import { listUserModels, addUserModel, deleteUserModel } from "#lib/db/userModels.js";
+	import type { UserModel } from "#lib/db/userModels.js";
+	import type { ModelResult, RunPayload, SingleRun } from "#lib/types/run.js";
+	import type { OpenRouterModelInfo } from "#lib/types/models.js";
 
 	const RUN_ID_PREFIX = "run-";
 	const API_KEY_STORAGE_KEY = "openrouter_api_key";
@@ -73,7 +76,9 @@
 	let generation_schema_open = $state(false);
 	let judge_schema_open = $state(false);
 	let selected_test_models = $state<Set<string>>(new Set(MODEL_CATALOG.filter((m) => m.defaultChecked).map((m) => m.id)));
-	let selected_judge_models = $state<Set<string>>(new Set(JUDGE_MODELS.slice(0, 3).map((m) => m.id)));
+	let selected_judge_models = $state<Set<string>>(new Set(DEFAULT_JUDGE_MODELS.map((m) => m.id)));
+	/** Reasoning effort chosen per judge; a judge missing here runs at its model's default effort. */
+	let judge_efforts = $state<Partial<Record<string, ReasoningEffort>>>({});
 	let runs_per_model = $state(3);
 	let temperature = $state(0.7);
 	let vary_temperature = $state(false);
@@ -90,7 +95,7 @@
 	let key_info = $state<Record<string, unknown> | null>(null);
 	let key_loading = $state(false);
 	let key_error = $state<string | null>(null);
-	let estimated_cost_usd = $state<number | null>(null);
+	const estimated_cost_usd = $derived(computeEstimatedCost());
 	let actual_cost_usd = $state(0);
 	let expanded_model_id = $state<string | null>(null);
 	let details_run_index = $state(0);
@@ -107,7 +112,7 @@
 	let columns_dropdown_open = $state(false);
 
 	// URL runId for viewing past run
-	const runIdParam = $derived($page.url.searchParams.get("runId"));
+	const runIdParam = $derived(page.url.searchParams.get("runId"));
 	let viewing_run = $state<RunPayload | null>(null);
 
 	// Derived
@@ -185,17 +190,15 @@
 	const visible_column_count = $derived(visible_columns.length);
 
 	function toggleRowVisibility(model_id: string) {
-		const next = new Set(hidden_model_ids);
-		if (next.has(model_id)) next.delete(model_id);
-		else next.add(model_id);
-		hidden_model_ids = next;
+		hidden_model_ids = hidden_model_ids.has(model_id)
+			? new Set([...hidden_model_ids].filter((id) => id !== model_id))
+			: new Set([...hidden_model_ids, model_id]);
 	}
 
 	function toggleColumnVisibility(col_id: string) {
-		const next = new Set(hidden_column_ids);
-		if (next.has(col_id)) next.delete(col_id);
-		else next.add(col_id);
-		hidden_column_ids = next;
+		hidden_column_ids = hidden_column_ids.has(col_id)
+			? new Set([...hidden_column_ids].filter((id) => id !== col_id))
+			: new Set([...hidden_column_ids, col_id]);
 	}
 
 	/** Auto scale min from data (lowest quality-related metric, rounded down to nearest 10). Used when not in bar view or as reference. */
@@ -219,8 +222,6 @@
 	const effective_bar_scale_min = $derived(
 		show_bars ? Math.max(0, Math.min(100, Number(bar_scale_min_user) || 0)) : bar_scale_min_auto
 	);
-	/** Alias for bar fill / display (kept for any reference that used the old name). */
-	const bar_scale_min = $derived(effective_bar_scale_min);
 
 	// Estimated cost: OpenRouter pricing is per-token (USD). Formula: (input_tokens * prompt_price + output_tokens * completion_price) per call.
 	function computeEstimatedCost(): number | null {
@@ -245,17 +246,17 @@
 			if (info?.pricing?.prompt != null && info?.pricing?.completion != null) {
 				const pin = parseFloat(String(info.pricing.prompt));
 				const pout = parseFloat(String(info.pricing.completion));
-				total += total_quiz_runs * (ASSUMED_TOKEN_SIZES.judge.input * pin + ASSUMED_TOKEN_SIZES.judge.output * pout);
+				// Priced at the judge's highest effort whatever is selected, so the estimate stays an upper bound.
+				const judgeOutput = JUDGE_OUTPUT_TOKENS_AT_HIGHEST_EFFORT[judgeId] ?? ASSUMED_TOKEN_SIZES.judge.output;
+				total += total_quiz_runs * (ASSUMED_TOKEN_SIZES.judge.input * pin + judgeOutput * pout);
 			}
 		}
 		return total * COST_ESTIMATE_SAFETY_FACTOR;
 	}
-	$effect(() => {
-		estimated_cost_usd = computeEstimatedCost();
-	});
 
+	// Start the detail view at the first run, question and judge whenever another model is expanded.
 	$effect(() => {
-		expanded_model_id;
+		void expanded_model_id;
 		details_run_index = 0;
 		details_question_index = 0;
 		details_judge_index = 0;
@@ -266,8 +267,12 @@
 	const LS_REQUEST = "llm-eval-request";
 	const LS_TEST_MODELS = "llm-eval-test-models";
 	const LS_JUDGE_MODELS = "llm-eval-judge-models";
+	const LS_JUDGE_EFFORTS = "llm-eval-judge-efforts";
 	const LS_SAMPLING = "llm-eval-sampling";
 	const LS_PROMPTS = "llm-eval-prompts";
+	const LS_MODELS_VERSION = "llm-eval-models-version";
+	/** Bump when MODEL_CATALOG or the default judges change, so saved model choices reset to the new defaults. */
+	const MODELS_STORAGE_VERSION = 3;
 	const PLACEHOLDER_OBJECTIVE = "{{learningObjective}}";
 	const PLACEHOLDER_REQUEST = "{{request}}";
 	const PLACEHOLDER_QUIZ_SCHEMA = "{{quiz_schema}}";
@@ -319,13 +324,15 @@
 		leave_confirmed = true;
 		show_leave_modal = false;
 		pending_navigate_url = null;
+		// Replays the in-app navigation that beforeNavigate cancelled; its URL was already resolved by SvelteKit.
+		// eslint-disable-next-line svelte/no-navigation-without-resolve
 		if (url) goto(url);
 	}
 
 	async function loadUserModels() {
 		try {
 			user_added_models = await listUserModels();
-		} catch (_) {
+		} catch {
 			user_added_models = [];
 		}
 	}
@@ -364,11 +371,11 @@
 		try {
 			await deleteUserModel(id);
 			user_added_models = user_added_models.filter((m) => m.id !== id);
-			const next = new Set(selected_test_models);
-			next.delete(id);
-			selected_test_models = next;
+			selected_test_models = new Set([...selected_test_models].filter((m) => m !== id));
 			saveToStorage();
-		} catch (_) {}
+		} catch {
+			// The model stays listed when IndexedDB refuses the delete.
+		}
 	}
 
 	function loadFromStorage() {
@@ -378,15 +385,31 @@
 			if (o != null) learning_objective = o;
 			const r = localStorage.getItem(LS_REQUEST);
 			if (r != null) request = r;
-			const t = localStorage.getItem(LS_TEST_MODELS);
+			// Model choices saved against an older catalog are dropped, so the current defaults apply.
+			const models_current = localStorage.getItem(LS_MODELS_VERSION) === String(MODELS_STORAGE_VERSION);
+			const t = models_current ? localStorage.getItem(LS_TEST_MODELS) : null;
 			if (t != null) {
 				const arr = JSON.parse(t) as string[];
 				if (Array.isArray(arr)) selected_test_models = new Set(arr);
 			}
-			const j = localStorage.getItem(LS_JUDGE_MODELS);
+			const j = models_current ? localStorage.getItem(LS_JUDGE_MODELS) : null;
 			if (j != null) {
 				const arr = JSON.parse(j) as string[];
-				if (Array.isArray(arr)) selected_judge_models = new Set(arr);
+				if (Array.isArray(arr)) {
+					const judges = arr.filter((id) => JUDGE_MODELS.some((m) => m.id === id)).slice(0, MAX_JUDGES);
+					if (judges.length > 0) selected_judge_models = new Set(judges);
+				}
+			}
+			const e = localStorage.getItem(LS_JUDGE_EFFORTS);
+			if (e != null) {
+				const obj = JSON.parse(e) as Record<string, unknown> | null;
+				if (obj && typeof obj === "object") {
+					const efforts: Partial<Record<string, ReasoningEffort>> = {};
+					for (const [id, effort] of Object.entries(obj)) {
+						if (JUDGE_MODELS.some((m) => m.id === id) && isReasoningEffort(effort)) efforts[id] = effort;
+					}
+					judge_efforts = efforts;
+				}
 			}
 			const s = localStorage.getItem(LS_SAMPLING);
 			if (s != null) {
@@ -398,7 +421,9 @@
 				if (obj && typeof obj.min_spacing_ms === "number") min_spacing_ms = obj.min_spacing_ms;
 				if (obj && typeof obj.use_enrichment_prompt === "boolean") use_enrichment_prompt = obj.use_enrichment_prompt;
 			}
-		} catch (_) {}
+		} catch {
+			// Saved settings are optional; anything unreadable falls back to the defaults.
+		}
 	}
 
 	const PROMPTS_STORAGE_VERSION = 6;
@@ -414,7 +439,9 @@
 			if (typeof obj.generation === "string") generation_prompt_template = obj.generation;
 			if (typeof obj.judge === "string") judge_prompt_template = obj.judge;
 			if (typeof obj.enrichment === "string") enrichment_prompt_template = obj.enrichment;
-		} catch (_) {}
+		} catch {
+			// Saved prompts are optional; unreadable ones leave the defaults in place.
+		}
 	}
 
 	function savePrompts() {
@@ -431,7 +458,9 @@
 			);
 			prompts_saved = true;
 			setTimeout(() => (prompts_saved = false), 2000);
-		} catch (_) {}
+		} catch {
+			// Storage can be full or blocked (private mode); saving prompts is best effort.
+		}
 	}
 
 	function resetPromptsToDefaults() {
@@ -441,7 +470,9 @@
 		if (typeof localStorage !== "undefined") {
 			try {
 				localStorage.removeItem(LS_PROMPTS);
-			} catch (_) {}
+			} catch {
+				// Storage can be blocked; the defaults are already applied in memory.
+			}
 		}
 	}
 
@@ -452,6 +483,8 @@
 			localStorage.setItem(LS_REQUEST, request);
 			localStorage.setItem(LS_TEST_MODELS, JSON.stringify([...selected_test_models]));
 			localStorage.setItem(LS_JUDGE_MODELS, JSON.stringify([...selected_judge_models]));
+			localStorage.setItem(LS_JUDGE_EFFORTS, JSON.stringify(judge_efforts));
+			localStorage.setItem(LS_MODELS_VERSION, String(MODELS_STORAGE_VERSION));
 			localStorage.setItem(
 				LS_SAMPLING,
 				JSON.stringify({
@@ -463,7 +496,9 @@
 					use_enrichment_prompt,
 				})
 			);
-		} catch (_) {}
+		} catch {
+			// Storage can be full or blocked; settings then simply do not persist.
+		}
 	}
 
 	async function fetchModels(refresh = false) {
@@ -478,12 +513,8 @@
 			}
 			if (!res.ok) throw new Error(await res.text());
 			const data = await res.json();
-			const list = data.data ?? data;
-			const map = new Map<string, OpenRouterModelInfo>();
-			for (const m of list) {
-				if (m?.id) map.set(m.id, m);
-			}
-			open_router_models = map;
+			const list: OpenRouterModelInfo[] = data.data ?? data;
+			open_router_models = new Map(list.filter((m) => m?.id).map((m) => [m.id, m]));
 		} catch (e) {
 			models_error = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -510,10 +541,9 @@
 	}
 
 	function toggleTestModel(id: string) {
-		const next = new Set(selected_test_models);
-		if (next.has(id)) next.delete(id);
-		else next.add(id);
-		selected_test_models = next;
+		selected_test_models = selected_test_models.has(id)
+			? new Set([...selected_test_models].filter((m) => m !== id))
+			: new Set([...selected_test_models, id]);
 		saveToStorage();
 	}
 
@@ -533,15 +563,37 @@
 	}
 
 	function toggleJudgeModel(id: string) {
-		const next = new Set(selected_judge_models);
-		if (next.has(id)) next.delete(id);
-		else if (next.size < 3) next.add(id);
-		else {
-			next.delete(id);
-			next.add(id);
+		if (selected_judge_models.has(id)) {
+			selected_judge_models = new Set([...selected_judge_models].filter((m) => m !== id));
+		} else if (selected_judge_models.size < MAX_JUDGES) {
+			selected_judge_models = new Set([...selected_judge_models, id]);
 		}
-		selected_judge_models = next;
 		saveToStorage();
+	}
+
+	/** An empty value (the "Default" option) clears the choice, so the judge runs at its model's default effort. */
+	function setJudgeEffort(id: string, value: string) {
+		const next = { ...judge_efforts };
+		if (isReasoningEffort(value)) next[id] = value;
+		else delete next[id];
+		judge_efforts = next;
+		saveToStorage();
+	}
+
+	/** The effort a judge will be sent: the saved choice when its model offers it, otherwise none (the model default). */
+	function judgeEffort(id: string): ReasoningEffort | undefined {
+		const effort = judge_efforts[id];
+		return effort && effortChoices(open_router_models.get(id)?.reasoning).includes(effort) ? effort : undefined;
+	}
+
+	/** The efforts the given judges will be sent, leaving out judges at their model default. */
+	function judgeEffortsFor(judgeIds: Iterable<string>): Partial<Record<string, ReasoningEffort>> {
+		const efforts: Partial<Record<string, ReasoningEffort>> = {};
+		for (const id of judgeIds) {
+			const effort = judgeEffort(id);
+			if (effort) efforts[id] = effort;
+		}
+		return efforts;
 	}
 
 	const TEMP_SPREAD = [0.4, 0.7, 1.0];
@@ -568,6 +620,8 @@
 		const jobs: { model_id: string; run_index: number; temperature: number }[] = [];
 		const testModelIds = [...selected_test_models];
 		const judgeIds = [...selected_judge_models];
+		// Fixed for the whole run, so changing a selector mid-run cannot mix efforts within one run.
+		const judgeEfforts = judgeEffortsFor(judgeIds);
 		for (let r = 0; r < nRuns; r++) {
 			for (const modelId of testModelIds) {
 				const temp = vary_temperature ? TEMP_SPREAD[r % TEMP_SPREAD.length] : temperature;
@@ -597,8 +651,10 @@
 		});
 		model_results = initialResults;
 
-		const resultsByModel = new Map<string, ModelResult>();
-		for (const m of model_results) resultsByModel.set(m.model_id, m);
+		// Latest aggregate per model while the workers run; model_results is rebuilt from it after each update.
+		const resultsByModel: Record<string, ModelResult> = Object.fromEntries(
+			model_results.map((m) => [m.model_id, m])
+		);
 
 		let currentRunDbId: number | null = null;
 		try {
@@ -616,6 +672,7 @@
 				min_spacing_ms,
 				selected_test_models: [...selected_test_models],
 				selected_judge_models: [...selected_judge_models],
+				judge_reasoning_efforts: judgeEfforts,
 				model_results: initialResults,
 				estimated_cost_usd: estimated_cost_usd ?? undefined,
 			};
@@ -646,6 +703,7 @@
 				min_spacing_ms,
 				selected_test_models: [...selected_test_models],
 				selected_judge_models: [...selected_judge_models],
+				judge_reasoning_efforts: judgeEfforts,
 				model_results,
 				estimated_cost_usd: estimated_cost_usd ?? undefined,
 				actual_cost_usd: actual_cost_usd > 0 ? actual_cost_usd : undefined,
@@ -668,7 +726,7 @@
 			const idx = jobIndex++;
 			if (idx >= jobs.length || cancel_requested) return;
 			const job = jobs[idx];
-			const modelResult = resultsByModel.get(job.model_id);
+			const modelResult = resultsByModel[job.model_id];
 			if (!modelResult) return;
 			const run = modelResult.runs[job.run_index];
 			if (!run) return;
@@ -803,7 +861,10 @@
 					for (const judgeId of judgeIds) {
 						if (cancel_requested) break;
 						const judgeLabel = catalogById.get(judgeId)?.label ?? judgeId;
-						appendProgress(`Judge evaluation (${judgeLabel}) for ${modelResult.model_label}, run ${job.run_index + 1}...`, false, "judge");
+						const judgeEffortValue = judgeEfforts[judgeId];
+						// Progress lines name the effort too, so a slow max-effort judge reads as expected rather than stuck.
+						const judgeTag = judgeEffortValue ? `${judgeLabel}, ${judgeEffortValue} effort` : judgeLabel;
+						appendProgress(`Judge evaluation (${judgeTag}) for ${modelResult.model_label}, run ${job.run_index + 1}...`, false, "judge");
 						const judgePrompt = buildJudgePromptFromTemplate(
 							judge_prompt_template,
 							learning_objective.trim(),
@@ -813,12 +874,13 @@
 						const jRes = await fetch("/api/judge", {
 							method: "POST",
 							headers: { "Content-Type": "application/json", ...getApiHeaders() },
-							body: JSON.stringify({ judge_model_id: judgeId, judge_prompt: judgePrompt }),
+							body: JSON.stringify({ judge_model_id: judgeId, judge_prompt: judgePrompt, reasoning_effort: judgeEffortValue }),
 						});
 						const jData = await jRes.json();
 						const judgeItem = {
 							judge_model_id: judgeId,
 							judge_label: judgeLabel,
+							reasoning_effort: judgeEffortValue,
 							raw_text: jData.raw_text ?? "",
 							usage: jData.usage,
 							cost: jData.cost,
@@ -829,14 +891,14 @@
 							const errMsg = jData.error ?? jRes.statusText;
 							console.error("[judge error]", { judge: judgeLabel, status: jRes.status, response: jData });
 							judgeItem.parse_error = errMsg;
-							appendProgress(`...Judge evaluation (${judgeLabel}) for ${modelResult.model_label}, run ${job.run_index + 1} failed: ${errMsg}`, true, "judge");
+							appendProgress(`...Judge evaluation (${judgeTag}) for ${modelResult.model_label}, run ${job.run_index + 1} failed: ${errMsg}`, true, "judge");
 						}
 						if (typeof jData.cost === "number") actual_cost_usd += jData.cost;
 						const jParsed = parseJudgeResponse(judgeItem.raw_text);
 						if (jParsed.parseError) {
 							console.error("[judge parse error]", { judge: judgeLabel, parseError: jParsed.parseError, raw_text: judgeItem.raw_text, ...(judgeItem.raw_text === "" ? { full_response: jData } : {}) });
 							judgeItem.parse_error = judgeItem.parse_error ? `${judgeItem.parse_error}; parse: ${jParsed.parseError}` : jParsed.parseError;
-							appendProgress(`...Judge parse error (${judgeLabel}) for ${modelResult.model_label}, run ${job.run_index + 1}: ${jParsed.parseError}`, true, "judge");
+							appendProgress(`...Judge parse error (${judgeTag}) for ${modelResult.model_label}, run ${job.run_index + 1}: ${jParsed.parseError}`, true, "judge");
 						} else if (!judgeItem.parse_error) judgeItem.parsed = jParsed.data;
 						run.judge_results = [...run.judge_results, judgeItem];
 						const quality = computeRunQualityFromJudges(run.judge_results);
@@ -847,10 +909,10 @@
 							run.run_compliance_avg = quality.run_compliance_avg;
 						}
 						const updated = computeModelAggregates(modelResult.model_id, modelResult.model_label, modelResult.runs);
-						resultsByModel.set(job.model_id, updated);
-						model_results = Array.from(resultsByModel.values());
+						resultsByModel[job.model_id] = updated;
+						model_results = Object.values(resultsByModel);
 						const judgeSec = (jData.wall_time_ms ?? 0) / 1000;
-						if (jRes.ok && !jParsed.parseError) appendProgress(`...Judge evaluation (${judgeLabel}) for ${modelResult.model_label}, run ${job.run_index + 1} complete (${judgeSec.toFixed(1)} s)`, false, "judge");
+						if (jRes.ok && !jParsed.parseError) appendProgress(`...Judge evaluation (${judgeTag}) for ${modelResult.model_label}, run ${job.run_index + 1} complete (${judgeSec.toFixed(1)} s)`, false, "judge");
 					}
 				}
 
@@ -881,8 +943,8 @@
 
 			// Recompute aggregates for this model
 			const updated = computeModelAggregates(modelResult.model_id, modelResult.model_label, modelResult.runs);
-			resultsByModel.set(job.model_id, updated);
-			model_results = Array.from(resultsByModel.values());
+			resultsByModel[job.model_id] = updated;
+			model_results = Object.values(resultsByModel);
 
 			// Persist partial run so we keep data if analysis is ended early
 			persistRunPayload();
@@ -915,6 +977,7 @@
 			min_spacing_ms,
 			selected_test_models: [...selected_test_models],
 			selected_judge_models: [...selected_judge_models],
+			judge_reasoning_efforts: judgeEfforts,
 			model_results,
 			estimated_cost_usd: estimated_cost_usd ?? undefined,
 			actual_cost_usd: actual_cost_usd > 0 ? actual_cost_usd : undefined,
@@ -940,7 +1003,7 @@
 		started_at = 0;
 		actual_cost_usd = 0;
 		viewing_run = null;
-		if (typeof window !== "undefined") window.history.replaceState({}, "", "/");
+		goto(resolve("/"), { replace: true, shallow: true });
 	}
 
 	function exportJson() {
@@ -958,6 +1021,7 @@
 			min_spacing_ms,
 			selected_test_models: [...selected_test_models],
 			selected_judge_models: [...selected_judge_models],
+			judge_reasoning_efforts: judgeEffortsFor(selected_judge_models),
 			model_results,
 			estimated_cost_usd,
 			actual_cost_usd,
@@ -996,8 +1060,9 @@
 		loadUserModels();
 		if (api_key_stored) fetchModels();
 
-		beforeNavigate(({ to, cancel }) => {
-			if (leave_confirmed) return;
+		beforeNavigate(({ to, cancel, shallow }) => {
+			// Shallow navigations (such as clearing ?runId) never leave the page.
+			if (leave_confirmed || shallow) return;
 			if (is_running && to?.url) {
 				cancel();
 				const u = to.url;
@@ -1019,7 +1084,7 @@
 		}
 		const numId = parseInt(id, 10);
 		if (Number.isNaN(numId)) return;
-		import("$lib/db/runs").then(({ getRun }) => {
+		import("#lib/db/runs.js").then(({ getRun }) => {
 			getRun(numId).then((stored) => {
 				if (runIdParam !== id || !stored) return;
 				viewing_run = stored;
@@ -1034,18 +1099,19 @@
 		});
 	});
 
-	// Debounced save to localStorage
+	// Debounced save to localStorage; the reads below subscribe the effect to every saved setting.
 	$effect(() => {
-		learning_objective;
-		request;
-		use_enrichment_prompt;
-		selected_test_models;
-		selected_judge_models;
-		runs_per_model;
-		temperature;
-		vary_temperature;
-		max_concurrency;
-		min_spacing_ms;
+		void learning_objective;
+		void request;
+		void use_enrichment_prompt;
+		void selected_test_models;
+		void selected_judge_models;
+		void judge_efforts;
+		void runs_per_model;
+		void temperature;
+		void vary_temperature;
+		void max_concurrency;
+		void min_spacing_ms;
 		const t = setTimeout(saveToStorage, 500);
 		return () => clearTimeout(t);
 	});
@@ -1081,9 +1147,9 @@
 	{#if viewing_run}
 		<div class="banner" role="status">
 			<span class="banner-text">Viewing past run.</span>
-			<a href="/" class="banner-link">Start new run</a>
+			<a href={resolve("/")} class="banner-link">Start new run</a>
 			<span class="banner-sep">·</span>
-			<a href="/runs" class="banner-link">Change run</a>
+			<a href={resolve("/runs")} class="banner-link">Change run</a>
 		</div>
 	{/if}
 
@@ -1091,9 +1157,9 @@
 		<h1 class="page-title">LLM Quiz Generation Evaluator</h1>
 		<p class="page-subtitle">Configure learning objectives, models, and sampling—then run evaluations and compare results.</p>
 		<p class="page-links">
-			<a href="/learn-more">Learn more</a>
+			<a href={resolve("/learn-more")}>Learn more</a>
 			<span class="page-links-sep">·</span>
-			<a href="/faq">FAQ</a>
+			<a href={resolve("/faq")}>FAQ</a>
 		</p>
 	</header>
 
@@ -1253,7 +1319,7 @@
 		</div>
 		{#if models_error}<p class="form-error">{models_error}</p>{/if}
 		<div class="model-grid">
-			{#each MODEL_CATALOG as model}
+			{#each MODEL_CATALOG as model (model.id)}
 				{@const info = open_router_models.get(model.id)}
 				{@const available = !!info}
 				<label class="model-row" class:unavailable={!available} for="test-model-{model.id}">
@@ -1267,7 +1333,7 @@
 		{#if user_added_models.length > 0}
 			<h3 class="user-models-heading">Your additional models</h3>
 			<div class="model-grid">
-				{#each user_added_models as model}
+				{#each user_added_models as model (model.id)}
 					{@const info = open_router_models.get(model.id)}
 					{@const available = !!info}
 					<div class="model-row model-row-with-delete" class:unavailable={!available}>
@@ -1287,11 +1353,11 @@
 				<div class="add-model-form">
 					<div class="form-group">
 						<label class="form-label" for="add-model-id">OpenRouter model ID</label>
-						<input id="add-model-id" type="text" class="input" placeholder="e.g. openai/gpt-4o" bind:value={add_model_id} />
+						<input id="add-model-id" type="text" class="input" placeholder="e.g. openai/gpt-6-luna" bind:value={add_model_id} />
 					</div>
 					<div class="form-group">
 						<label class="form-label" for="add-model-label">Display label (optional)</label>
-						<input id="add-model-label" type="text" class="input" placeholder="e.g. My GPT-4o" bind:value={add_model_label} />
+						<input id="add-model-label" type="text" class="input" placeholder="e.g. My GPT-6 Luna" bind:value={add_model_label} />
 					</div>
 					{#if add_model_error}<p class="form-error">{add_model_error}</p>{/if}
 					<div class="add-model-buttons">
@@ -1308,15 +1374,24 @@
 	</section>
 
 	<section class="card judge-card">
-		<h2 class="card-title">Judge models <span class="card-badge">max 3</span></h2>
+		<h2 class="card-title">Judge models <span class="card-badge">max {MAX_JUDGES}</span></h2>
 		<div class="model-grid">
-			{#each JUDGE_MODELS as model}
-				<label class="model-row" for="judge-model-{model.id}">
-					<input id="judge-model-{model.id}" type="checkbox" class="input-checkbox" checked={selected_judge_models.has(model.id)} onchange={() => toggleJudgeModel(model.id)} disabled={!!viewing_run || (selected_judge_models.size >= 3 && !selected_judge_models.has(model.id))} />
-					<span class="model-label">{model.label}</span>
-				</label>
+			{#each JUDGE_MODELS as model (model.id)}
+				{@const reasoning = open_router_models.get(model.id)?.reasoning}
+				{@const choices = effortChoices(reasoning)}
+				<div class="model-row judge-row">
+					<label class="model-row-inner" for="judge-model-{model.id}">
+						<input id="judge-model-{model.id}" type="checkbox" class="input-checkbox" checked={selected_judge_models.has(model.id)} onchange={() => toggleJudgeModel(model.id)} disabled={!!viewing_run || (selected_judge_models.size >= MAX_JUDGES && !selected_judge_models.has(model.id))} />
+						<span class="model-label">{model.label}</span>
+					</label>
+					<select class="input input-select judge-effort" aria-label="Reasoning effort for {model.label}" value={judgeEffort(model.id) ?? ""} onchange={(e) => setJudgeEffort(model.id, e.currentTarget.value)} disabled={!!viewing_run || choices.length === 0}>
+						<option value="">{reasoning?.default_effort ? `Default (${reasoning.default_effort})` : "Default"}</option>
+						{#each choices as effort (effort)}<option value={effort}>{effort}</option>{/each}
+					</select>
+				</div>
 			{/each}
 		</div>
+		<p class="form-hint">Effort is how long each judge reasons before it scores. Reasoning is billed as output, so higher effort costs more and takes longer. Default leaves it to the model.</p>
 	</section>
 
 	<section class="card sampling-card">
@@ -1333,7 +1408,7 @@
 					</span>
 				</div>
 				<select id="runs-per-model" class="input input-select" bind:value={runs_per_model} disabled={!!viewing_run}>
-					{#each [1, 2, 3, 4, 5] as n}<option value={n}>{n}</option>{/each}
+					{#each [1, 2, 3, 4, 5] as n (n)}<option value={n}>{n}</option>{/each}
 				</select>
 			</div>
 			<div class="form-group">
@@ -1369,7 +1444,7 @@
 					</span>
 				</div>
 				<select id="max-concurrency" class="input input-select" bind:value={max_concurrency} disabled={!!viewing_run}>
-					{#each [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as n}<option value={n}>{n}</option>{/each}
+					{#each [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as n (n)}<option value={n}>{n}</option>{/each}
 				</select>
 			</div>
 			<div class="form-group">
@@ -1410,7 +1485,7 @@
 			{#if key_loading}<span class="muted">Loading key info…</span>{/if}
 			{#if key_error}<span class="form-error">{key_error}</span>{/if}
 			{#if key_info}<pre class="key-info">{JSON.stringify(key_info, null, 2).slice(0, 300)}…</pre>{/if}
-			<p class="cost-line">Estimated cost: <strong>{formatCost(estimated_cost_usd ?? null)}</strong> · Actual: <strong>{formatCost(actual_cost_usd || null)}</strong></p>
+			<p class="cost-line"><span class="cost-pair">Estimated cost: <strong>{formatCost(estimated_cost_usd ?? null)}</strong> <span class="muted" title="Judges are priced at their highest effort, so a lower effort costs less than this.">(upper bound)</span></span> · <span class="cost-pair">Actual: <strong>{formatCost(actual_cost_usd || null)}</strong></span></p>
 			<div class="run-buttons">
 				{#if !viewing_run}
 					<button type="button" class="btn btn-ghost btn-sm" onclick={() => fetchKeyInfo()}>Refresh key info</button>
@@ -1426,7 +1501,7 @@
 			<h2 class="card-title">Progress</h2>
 			<p class="progress-text">{completed_runs} / {total_runs} runs complete</p>
 			<div class="progress-bar" role="progressbar" aria-valuenow={completed_runs} aria-valuemin={0} aria-valuemax={total_runs} title="{completed_runs} / {total_runs}">
-				{#each run_statuses as status}
+				{#each run_statuses as status, i (i)}
 					<span
 						class="progress-segment segment-{status === 'complete' || status === 'failed' ? 'done' : status === 'running' ? 'active' : 'pending'}"
 						title={status}
@@ -1439,7 +1514,7 @@
 					{#if progress_log_lines.length === 0}
 						<span class="progress-log-placeholder">Progress will appear here as runs and judge calls start and complete.</span>
 					{:else}
-						{#each progress_log_lines as line}
+						{#each progress_log_lines as line, i (i)}
 							<div class="progress-log-line" class:progress-log-error={line.isError} class:progress-log-generation={line.type === "generation"} class:progress-log-judge={line.type === "judge"}>{line.text}</div>
 						{/each}
 					{/if}
@@ -1472,10 +1547,9 @@
 							Rows
 						</button>
 						{#if rows_dropdown_open}
-							<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions a11y_no_noninteractive_element_interactions -->
 							<div class="filter-dropdown-backdrop" role="presentation" onclick={() => rows_dropdown_open = false}></div>
 							<div class="filter-dropdown-panel" role="group" aria-label="Show or hide rows">
-								{#each sorted_results as result}
+								{#each sorted_results as result (result.model_id)}
 									<label class="filter-dropdown-item">
 										<input type="checkbox" checked={!hidden_model_ids.has(result.model_id)} onchange={() => toggleRowVisibility(result.model_id)} />
 										<span>{result.model_label}</span>
@@ -1489,10 +1563,9 @@
 							Columns
 						</button>
 						{#if columns_dropdown_open}
-							<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions a11y_no_noninteractive_element_interactions -->
 							<div class="filter-dropdown-backdrop" role="presentation" onclick={() => columns_dropdown_open = false}></div>
 							<div class="filter-dropdown-panel" role="group" aria-label="Show or hide columns">
-								{#each RESULT_COLUMNS as col}
+								{#each RESULT_COLUMNS as col (col.id)}
 									<label class="filter-dropdown-item">
 										<input type="checkbox" checked={!hidden_column_ids.has(col.id)} onchange={() => toggleColumnVisibility(col.id)} />
 										<span>{col.label}</span>
@@ -1507,7 +1580,7 @@
 			<table class="results-table">
 				<thead>
 					<tr>
-						{#each visible_columns as col}
+						{#each visible_columns as col (col.id)}
 							{#if col.id === "model"}
 								<th>Model</th>
 							{:else if col.id === "runs"}
@@ -1533,7 +1606,7 @@
 					</tr>
 				</thead>
 				<tbody>
-					{#each visible_results as result}
+					{#each visible_results as result (result.model_id)}
 						{@const evalsCompleted = result.runs.reduce((s, r) => s + r.judge_results.length, 0)}
 						{@const evalsTotal = result.runs.length * selected_judge_models.size}
 						<tr
@@ -1543,13 +1616,13 @@
 							onclick={() => expanded_model_id = expanded_model_id === result.model_id ? null : result.model_id}
 							onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); expanded_model_id = expanded_model_id === result.model_id ? null : result.model_id; } }}
 						>
-							{#each visible_columns as col}
+							{#each visible_columns as col (col.id)}
 								{#if col.id === "model"}
 									<td>{result.model_label}</td>
 								{:else if col.id === "runs"}
 									<td class="run-dots-cell">
 										<div class="run-dots" title="Run status: grey=queued, orange=generating, green=judging/done">
-											{#each result.runs as run}
+											{#each result.runs as run (run.run_index)}
 												{@const phase = run.status === "queued" ? "queued" : run.status === "complete" || run.status === "failed" ? "done" : run.judge_results.length === 0 ? "generating" : run.judge_results.length < selected_judge_models.size ? "judging" : "done"}
 												<span class="run-dot phase-{phase}" title="Run {run.run_index + 1}: {phase}"></span>
 											{/each}
@@ -1653,7 +1726,7 @@
 												</div>
 												<div class="details-judge-card">
 													<dl class="details-judge-meta">
-														<dt>Judge</dt><dd>{j.judge_label}</dd>
+														<dt>Judge</dt><dd>{j.judge_label}{j.reasoning_effort ? ` · ${j.reasoning_effort} effort` : ""}</dd>
 														<dt>Overall</dt><dd>{scores ? scores.quality.toFixed(0) : "—"}</dd>
 														<dt>Conf.</dt><dd>{qe != null ? qe.confidence : "—"}</dd>
 														<dt>Verdict</dt><dd>{qe?.summary?.verdict ?? "—"}</dd>
@@ -1676,7 +1749,7 @@
 													{#if qe?.rubric}
 														<div class="details-judge-rubric">
 															<dl class="rubric-dl">
-																{#each Object.entries(qe.rubric) as [key, dim]}
+																{#each Object.entries(qe.rubric) as [key, dim] (key)}
 																	<dt>{key.replace(/_/g, " ")}</dt>
 																	<dd>{dim.score_0_4}/4 — {dim.evidence}</dd>
 																{/each}
@@ -1710,7 +1783,7 @@
 														<p class="question-text">{question.question}</p>
 														{#if question.type === "multiple_choice" && question.choices?.length > 0}
 															<ol class="question-choices" start="1">
-																{#each question.choices as choice, i}
+																{#each question.choices as choice, i (i)}
 																	<li class="{i === question.answer_index ? 'correct' : ''}">{choice}</li>
 																{/each}
 															</ol>
@@ -1762,7 +1835,6 @@
 	{/if}
 
 	{#if show_openrouter_overlay}
-		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 		<div
 			class="openrouter-overlay-backdrop"
 			role="dialog"
@@ -1976,6 +2048,8 @@
 	.model-meta { flex: 1; font-size: var(--text-xs); color: var(--color-text-muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.user-models-heading { font-size: var(--text-base); font-weight: var(--font-semibold); margin: var(--space-6) 0 var(--space-2) 0; color: var(--color-text-muted); }
 	.model-row-with-delete { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+	.judge-row { justify-content: space-between; gap: var(--space-2); cursor: default; }
+	.judge-effort { width: auto; flex: 0 0 auto; padding: var(--space-1) var(--space-2); font-size: var(--text-xs); max-width: 9rem; }
 	.model-row-inner { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--space-3); cursor: pointer; }
 	.add-model-section { margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--color-border); }
 	.add-model-form { display: flex; flex-direction: column; gap: var(--space-3); max-width: 400px; }
@@ -1986,6 +2060,7 @@
 	.run-actions { display: flex; gap: var(--space-2); margin-bottom: var(--space-4); flex-wrap: wrap; }
 	.run-meta { font-size: var(--text-sm); color: var(--color-text-muted); }
 	.cost-line { margin: var(--space-2) 0; }
+	.cost-pair { white-space: nowrap; }
 	.run-buttons { display: flex; gap: var(--space-2); margin-top: var(--space-2); flex-wrap: wrap; }
 	.key-info { font-size: var(--text-xs); max-height: 80px; overflow: auto; background: var(--color-bg); padding: var(--space-2); border-radius: var(--radius-sm); margin: var(--space-2) 0; }
 

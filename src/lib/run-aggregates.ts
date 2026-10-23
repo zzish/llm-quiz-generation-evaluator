@@ -1,6 +1,6 @@
-import type { JudgeResponse } from "$lib/types/judge";
-import { isQuizEvalResponse } from "$lib/types/judge";
-import type { ModelResult, SingleRun } from "$lib/types/run";
+import type { JudgeResponse } from "#lib/types/judge.js";
+import { isQuizEvalResponse } from "#lib/types/judge.js";
+import type { ModelResult, SingleRun } from "#lib/types/run.js";
 
 function mean(arr: number[]): number {
 	if (arr.length === 0) return 0;

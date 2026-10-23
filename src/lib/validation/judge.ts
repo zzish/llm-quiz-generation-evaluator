@@ -1,4 +1,4 @@
-import type { JudgeResponse, LegacyJudgeResponse, QuizEvalJudgeResponse } from "$lib/types/judge";
+import type { JudgeResponse, LegacyJudgeResponse, QuizEvalJudgeResponse } from "#lib/types/judge.js";
 
 /**
  * Try to extract and fix JSON from judge output (handles markdown, trailing commas, extra text).

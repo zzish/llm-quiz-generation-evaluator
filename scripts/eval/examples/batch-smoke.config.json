@@ -1,0 +1,7 @@
+{
+	"candidates": [],
+	"judges": [
+		{ "id": "haiku-low-batch", "model": "anthropic:claude-haiku-5-5", "reasoning": "low", "batch": true, "note": "a cheap judge that exercises the Message Batches path end to end" }
+	],
+	"limits": { "candidateMaxOutputTokens": 32000, "judgeMaxOutputTokens": 64000 }
+}

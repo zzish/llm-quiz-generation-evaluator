@@ -1,4 +1,4 @@
-import type { RunPayload, StoredRun, StoredRunSummary } from "$lib/types/run";
+import type { RunPayload, StoredRun, StoredRunSummary } from "#lib/types/run.js";
 
 const DB_NAME = "llm-evaluator-runs";
 const STORE_NAME = "runs";

@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { onMount } from "svelte";
 	import { goto } from "$app/navigation";
-	import { listRuns, deleteRun } from "$lib/db/runs";
-	import type { StoredRunSummary } from "$lib/types/run";
+	import { resolve } from "$app/paths";
+	import { listRuns, deleteRun } from "#lib/db/runs.js";
+	import type { StoredRunSummary } from "#lib/types/run.js";
 
 	let runs = $state<StoredRunSummary[]>([]);
 	let loading = $state(true);
@@ -10,15 +11,14 @@
 	let selectedRunIds = $state<Set<number>>(new Set());
 
 	function toggleRunSelection(id: number) {
-		const next = new Set(selectedRunIds);
-		if (next.has(id)) next.delete(id);
-		else next.add(id);
-		selectedRunIds = next;
+		selectedRunIds = selectedRunIds.has(id)
+			? new Set([...selectedRunIds].filter((runId) => runId !== id))
+			: new Set([...selectedRunIds, id]);
 	}
 
 	function compareRuns() {
 		if (selectedRunIds.size === 0) return;
-		goto(`/compare-runs?ids=${[...selectedRunIds].join(",")}`);
+		goto(resolve(`/compare-runs?ids=${[...selectedRunIds].join(",")}`));
 	}
 
 	function load() {
@@ -36,17 +36,15 @@
 			});
 	}
 
-	function viewRun(id: number) {
-		goto(`/?runId=${id}`);
-	}
-
 	async function removeRun(id: number, e: MouseEvent) {
 		e.preventDefault();
 		e.stopPropagation();
 		try {
 			await deleteRun(id);
 			runs = runs.filter((r) => r.id !== id);
-		} catch (_) {}
+		} catch {
+			// The run stays listed when IndexedDB refuses the delete.
+		}
 	}
 
 	function formatDate(ms: number): string {
@@ -93,25 +91,25 @@
 		<div class="card empty-state">
 			<p class="empty-text">No runs yet</p>
 			<p class="muted">Run an evaluation on the Evaluator page to see results here.</p>
-			<a href="/" class="btn btn-primary">Go to Evaluator</a>
+			<a href={resolve("/")} class="btn btn-primary">Go to Evaluator</a>
 		</div>
 	{:else}
 		<p class="run-list-note muted">Select to compare</p>
 		<ul class="run-list">
-			{#each runs as run}
+			{#each runs as run (run.id)}
 				<li class="run-item">
 					<article class="card run-card">
 						<label class="run-checkbox-wrap">
 							<input type="checkbox" class="run-checkbox" checked={selectedRunIds.has(run.id)} onchange={() => toggleRunSelection(run.id)} onclick={(e) => e.stopPropagation()} aria-label="Select to compare" />
 						</label>
-						<a href="/?runId={run.id}" class="run-main">
+						<a href={resolve(`/?runId=${run.id}`)} class="run-main">
 							<time class="run-date" datetime={new Date(run.started_at).toISOString()}>{formatDate(run.started_at)}</time>
 							<p class="run-snippet">{run.learning_objective_snippet}</p>
 							<p class="run-snippet run-request">{run.request_snippet}</p>
 							<p class="run-meta">{run.model_count} models · {run.quality_avg != null ? "Quality " + run.quality_avg.toFixed(0) : "—"}</p>
 						</a>
 						<div class="run-actions">
-							<a href="/?runId={run.id}" class="btn btn-primary btn-sm">View</a>
+							<a href={resolve(`/?runId=${run.id}`)} class="btn btn-primary btn-sm">View</a>
 							<button type="button" class="btn btn-ghost btn-sm btn-danger" onclick={(e) => removeRun(run.id, e)}>Delete</button>
 						</div>
 					</article>

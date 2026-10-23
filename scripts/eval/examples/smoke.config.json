@@ -1,0 +1,13 @@
+{
+	"candidates": [
+		{ "id": "luna-none", "model": "azure:gpt-6-luna", "reasoning": "none", "note": "a fast, low-cost candidate" },
+		{ "id": "haiku-low", "model": "anthropic:claude-haiku-5-5", "reasoning": "low" }
+	],
+	"judges": [
+		{ "id": "opus-max", "model": "anthropic:claude-opus-5-5", "reasoning": "max" },
+		{ "id": "astra-max", "model": "azure:gpt-6-astra", "reasoning": "max" },
+		{ "id": "argon-high", "model": "google:gemini-4-argon", "reasoning": "high" },
+		{ "id": "muse-max", "model": "meta:muse-wonder-1.0", "reasoning": "max" }
+	],
+	"limits": { "candidateMaxOutputTokens": 32000, "judgeMaxOutputTokens": 64000 }
+}

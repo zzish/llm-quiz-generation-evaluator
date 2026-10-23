@@ -1,7 +1,8 @@
 <script lang="ts">
 	import '../app.css';
-	import favicon from '$lib/assets/favicon.svg';
-	import { page } from '$app/stores';
+	import favicon from '#lib/assets/favicon.svg';
+	import { page } from '$app/state';
+	import { resolve } from '$app/paths';
 
 	let { children } = $props();
 </script>
@@ -13,13 +14,13 @@
 <div class="app-shell">
 	<header class="header">
 		<div class="header-inner">
-			<a href="/" class="logo">
+			<a href={resolve('/')} class="logo">
 				<span class="logo-icon" aria-hidden="true">◇</span>
 				<span class="logo-text">LLM Quiz Generation Evaluator</span>
 			</a>
 			<nav class="nav" aria-label="Main">
-				<a href="/" class="nav-link" class:active={$page.url.pathname === '/'}>Evaluator</a>
-				<a href="/runs" class="nav-link" class:active={$page.url.pathname === '/runs'}>Past runs</a>
+				<a href={resolve('/')} class="nav-link" class:active={page.url.pathname === '/'}>Evaluator</a>
+				<a href={resolve('/runs')} class="nav-link" class:active={page.url.pathname === '/runs'}>Past runs</a>
 			</nav>
 		</div>
 	</header>

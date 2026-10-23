@@ -1,5 +1,6 @@
 import type { QuizOutput } from "./quiz";
 import type { JudgeResponse } from "./judge";
+import type { ReasoningEffort } from "#lib/config/reasoning.js";
 
 export type RunStatus = "queued" | "running" | "complete" | "failed";
 
@@ -11,6 +12,8 @@ export interface UsageInfo {
 export interface JudgeResultItem {
 	judge_model_id: string;
 	judge_label: string;
+	/** The `reasoning.effort` sent to the judge; absent when the model used its own default. */
+	reasoning_effort?: ReasoningEffort;
 	raw_text: string;
 	parsed?: JudgeResponse;
 	parse_error?: string;
@@ -80,6 +83,8 @@ export interface RunPayload {
 	min_spacing_ms: number;
 	selected_test_models: string[];
 	selected_judge_models: string[];
+	/** Reasoning effort per judge model id; a judge missing here used its model's default. */
+	judge_reasoning_efforts?: Partial<Record<string, ReasoningEffort>>;
 	model_results: ModelResult[];
 	estimated_cost_usd?: number;
 	actual_cost_usd?: number;

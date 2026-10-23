@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { onMount } from "svelte";
-	import { page } from "$app/stores";
-	import { getRun } from "$lib/db/runs";
-	import type { StoredRun, ModelResult } from "$lib/types/run";
+	import { page } from "$app/state";
+	import { resolve } from "$app/paths";
+	import { getRun } from "#lib/db/runs.js";
+	import type { StoredRun, ModelResult } from "#lib/types/run.js";
 
 	type CompareMetric =
 		| "quality_avg"
@@ -39,26 +39,27 @@
 	let models_dropdown_open = $state(false);
 	let header_angle = $state(0);
 
-	const idsParam = $derived($page.url.searchParams.get("ids") ?? "");
-	const ids = $derived(
-		idsParam
-			.split(",")
-			.map((s) => parseInt(s.trim(), 10))
-			.filter((n) => !Number.isNaN(n) && n > 0)
-	);
+	const idsParam = $derived(page.url.searchParams.get("ids") ?? "");
+	// Unique ids, so each run renders once and can key its rows.
+	const ids = $derived([
+		...new Set(
+			idsParam
+				.split(",")
+				.map((s) => parseInt(s.trim(), 10))
+				.filter((n) => !Number.isNaN(n) && n > 0)
+		),
+	]);
 
+	// One column per model, in first-seen order, labelled as in the first run that has it.
 	const columns = $derived.by(() => {
-		const modelMap = new Map<string, string>();
-		for (const run of runs) {
-			for (const m of run.model_results ?? []) {
-				if (!modelMap.has(m.model_id)) modelMap.set(m.model_id, m.model_label);
-			}
-		}
-		return Array.from(modelMap.entries()).map(([model_id, model_label]) => ({ model_id, model_label }));
+		const all = runs.flatMap((run) => run.model_results ?? []);
+		return all
+			.filter((m, i) => all.findIndex((other) => other.model_id === m.model_id) === i)
+			.map(({ model_id, model_label }) => ({ model_id, model_label }));
 	});
 
 	const sortedRuns = $derived.by(() => {
-		selectedMetric;
+		void selectedMetric; // re-sort when the metric changes
 		const list = [...runs];
 		const col = sort_column;
 		const desc = sort_desc;
@@ -141,23 +142,15 @@
 	);
 
 	function toggleRunVisibility(run_id: string) {
-		const next = new Set(hidden_run_ids);
-		if (next.has(run_id)) next.delete(run_id);
-		else next.add(run_id);
-		hidden_run_ids = next;
+		hidden_run_ids = hidden_run_ids.has(run_id)
+			? new Set([...hidden_run_ids].filter((id) => id !== run_id))
+			: new Set([...hidden_run_ids, run_id]);
 	}
 
 	function toggleModelVisibility(model_id: string) {
-		const next = new Set(hidden_model_ids);
-		if (next.has(model_id)) next.delete(model_id);
-		else next.add(model_id);
-		hidden_model_ids = next;
-	}
-
-	function getRunColumnValues(run: StoredRun): number[] {
-		return visible_models
-			.map((col) => getCellValue(run, col.model_id))
-			.filter((v): v is number => typeof v === "number");
+		hidden_model_ids = hidden_model_ids.has(model_id)
+			? new Set([...hidden_model_ids].filter((id) => id !== model_id))
+			: new Set([...hidden_model_ids, model_id]);
 	}
 
 	const isZeroToHundredMetric = $derived(
@@ -167,7 +160,7 @@
 		show_bars && isZeroToHundredMetric ? Math.max(0, Math.min(100, Number(bar_scale_min_user) || 0)) : 0
 	);
 	const allNumericValues = $derived.by(() => {
-		selectedMetric;
+		void selectedMetric; // rescale when the metric changes
 		const vals: number[] = [];
 		for (const run of runs) {
 			for (const col of columns) {
@@ -296,18 +289,18 @@
 			<label class="metric-select-wrap">
 				<span class="metric-select-label">Show</span>
 				<select class="input input-select metric-select" bind:value={selectedMetric} aria-label="Metric to display">
-					{#each METRIC_OPTIONS as opt}
+					{#each METRIC_OPTIONS as opt (opt.value)}
 						<option value={opt.value}>{opt.label}</option>
 					{/each}
 				</select>
 			</label>
-			<a href="/runs" class="btn btn-ghost btn-sm">← Back to past runs</a>
+			<a href={resolve("/runs")} class="btn btn-ghost btn-sm">← Back to past runs</a>
 		</div>
 	</header>
 
 	{#if ids.length === 0}
 		<div class="card empty-state">
-			<p class="muted">No runs selected. Go to <a href="/runs">Past runs</a> and check runs, then click Compare runs.</p>
+			<p class="muted">No runs selected. Go to <a href={resolve("/runs")}>Past runs</a> and check runs, then click Compare runs.</p>
 		</div>
 	{:else if loading}
 		<div class="card empty-state">
@@ -352,10 +345,9 @@
 							Runs
 						</button>
 						{#if runs_dropdown_open}
-							<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions a11y_no_noninteractive_element_interactions -->
 							<div class="filter-dropdown-backdrop" role="presentation" onclick={() => runs_dropdown_open = false}></div>
 							<div class="filter-dropdown-panel" role="group" aria-label="Show or hide runs">
-								{#each sortedRuns as run}
+								{#each sortedRuns as run (run.id)}
 									<label class="filter-dropdown-item">
 										<input type="checkbox" checked={!hidden_run_ids.has(run.run_id)} onchange={() => toggleRunVisibility(run.run_id)} />
 										<span>{snippet(run.learning_objective, 60)}</span>
@@ -369,10 +361,9 @@
 							Models
 						</button>
 						{#if models_dropdown_open}
-							<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions a11y_no_noninteractive_element_interactions -->
 							<div class="filter-dropdown-backdrop" role="presentation" onclick={() => models_dropdown_open = false}></div>
 							<div class="filter-dropdown-panel" role="group" aria-label="Show or hide models">
-								{#each columns as col}
+								{#each columns as col (col.model_id)}
 									<label class="filter-dropdown-item">
 										<input type="checkbox" checked={!hidden_model_ids.has(col.model_id)} onchange={() => toggleModelVisibility(col.model_id)} />
 										<span>{col.model_label}</span>
@@ -389,12 +380,12 @@
 					<thead>
 						<tr>
 							<th class="compare-row-header compare-th-sortable" role="button" tabindex="0" onclick={() => setSort("model")} onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSort("model"); } }} title="Sort by model">Model {#if sort_column === "model"}{sort_desc ? "↓" : "↑"}{/if}</th>
-							{#each visible_runs as run, runIdx}
+							{#each visible_runs as run (run.id)}
 								{@const sortIdx = sortedRuns.indexOf(run)}
 								<th class="compare-cell compare-th-sortable compare-th-column" role="button" tabindex="0" onclick={() => setSort("run_" + sortIdx)} onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSort("run_" + sortIdx); } }} title={run.learning_objective}>
 									<span class="compare-th-inner">
 										{#if run.id != null}
-											<a href="/?runId={run.id}" class="compare-run-link" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>{snippet(run.learning_objective, 50)}</a>
+											<a href={resolve(`/?runId=${run.id}`)} class="compare-run-link" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>{snippet(run.learning_objective, 50)}</a>
 										{:else}
 											{snippet(run.learning_objective, 50)}
 										{/if}
@@ -408,13 +399,13 @@
 						</tr>
 					</thead>
 					<tbody>
-						{#each visible_model_rows as col}
+						{#each visible_model_rows as col (col.model_id)}
 							{@const modelValues = getColumnValues(col.model_id)}
 							{@const modelAvg = mean(modelValues)}
 							{@const modelStd = std(modelValues, modelAvg)}
 							<tr>
 								<td class="compare-row-header" title={col.model_label}>{col.model_label}</td>
-								{#each visible_runs as run}
+								{#each visible_runs as run (run.id)}
 									{@const val = getCellValue(run, col.model_id)}
 									<td class="compare-cell">
 										{#if show_bars}
@@ -440,7 +431,7 @@
 					<thead>
 						<tr>
 							<th class="compare-row-header compare-th-sortable" role="button" tabindex="0" onclick={() => setSort("learning_objective")} onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSort("learning_objective"); } }} title="Sort by learning objective">Learning objective {#if sort_column === "learning_objective"}{sort_desc ? "↓" : "↑"}{/if}</th>
-							{#each visible_models as col}
+							{#each visible_models as col (col.model_id)}
 								<th class="compare-cell compare-th-sortable compare-th-column" role="button" tabindex="0" onclick={() => setSort(col.model_id)} onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSort(col.model_id); } }} title="Sort by {col.model_label}">
 									<span class="compare-th-inner">{col.model_label} {#if sort_column === col.model_id}{sort_desc ? "↓" : "↑"}{/if}</span>
 								</th>
@@ -448,16 +439,16 @@
 						</tr>
 					</thead>
 					<tbody>
-						{#each visible_runs as run}
+						{#each visible_runs as run (run.id)}
 							<tr>
 								<td class="compare-row-header" title={run.learning_objective}>
 									{#if run.id != null}
-										<a href="/?runId={run.id}" class="compare-run-link">{snippet(run.learning_objective, 70)}</a>
+										<a href={resolve(`/?runId=${run.id}`)} class="compare-run-link">{snippet(run.learning_objective, 70)}</a>
 									{:else}
 										{snippet(run.learning_objective, 70)}
 									{/if}
 								</td>
-								{#each visible_models as col}
+								{#each visible_models as col (col.model_id)}
 									{@const val = getCellValue(run, col.model_id)}
 									<td class="compare-cell">
 										{#if show_bars}
@@ -473,7 +464,7 @@
 					<tfoot>
 						<tr class="compare-footer-row">
 							<td class="compare-row-header compare-footer-label">Average</td>
-							{#each visible_models as col}
+							{#each visible_models as col (col.model_id)}
 								{@const values = getColumnValues(col.model_id)}
 								{@const avg = mean(values)}
 								{@const stdVal = std(values, avg)}

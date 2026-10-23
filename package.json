@@ -9,15 +9,32 @@
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch"
+		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+		"lint": "eslint .",
+		"test": "node --import ./scripts/eval/register.mjs --test \"src/**/*.test.ts\" \"scripts/**/*.test.ts\"",
+		"eval": "node --import ./scripts/eval/register.mjs --env-file-if-exists=.env scripts/eval/run.ts"
 	},
 	"devDependencies": {
-		"@sveltejs/adapter-auto": "^7.0.0",
-		"@sveltejs/kit": "^2.50.1",
-		"@sveltejs/vite-plugin-svelte": "^6.2.4",
-		"svelte": "^5.48.2",
-		"svelte-check": "^4.3.5",
-		"typescript": "^5.9.3",
-		"vite": "^7.3.1"
+		"@eslint/js": "^10.0.1",
+		"@sveltejs/adapter-auto": "^8.0.0",
+		"@sveltejs/kit": "^3.1.0",
+		"@sveltejs/vite-plugin-svelte": "^7.3.1",
+		"@types/node": "^26.6.5",
+		"eslint": "^10.13.0",
+		"eslint-plugin-svelte": "^3.23.1",
+		"globals": "^17.13.0",
+		"svelte": "^5.57.2",
+		"svelte-check": "^4.7.7",
+		"typescript": "npm:@typescript/typescript6@^6.0.2",
+		"typescript-eslint": "^8.72.0",
+		"vite": "^8.3.5"
+	},
+	"imports": {
+		"#lib": "./src/lib/index.js",
+		"#lib/*": "./src/lib/*"
+	},
+	"dependencies": {
+		"@anthropic-ai/sdk": "^1.1.0",
+		"openai": "^7.43.0"
 	}
 }

@@ -1,3 +1,5 @@
+import type { ReasoningEffort } from "#lib/config/reasoning.js";
+
 const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
 
 export interface ChatMessage {
@@ -19,12 +21,7 @@ export interface ChatResult {
 const MAX_RETRIES = 3;
 const INITIAL_BACKOFF_MS = 1000;
 
-/**
- * Call OpenRouter chat completions. On 429, retry with exponential backoff.
- * Returns raw text, service time (TTFB), wall time, retry/backoff/throttle counts, usage and cost if present.
- * apiKey is supplied by the client via request header (not from env).
- */
-export async function chat(options: {
+export interface ChatOptions {
 	apiKey: string;
 	modelId: string;
 	messages: ChatMessage[];
@@ -32,12 +29,12 @@ export async function chat(options: {
 	maxTokens?: number;
 	/** Optional. { type: "json_object" } asks the model to return valid JSON (OpenRouter normalizes for GPT, Claude, Gemini). */
 	response_format?: { type: "json_object" };
-}): Promise<ChatResult> {
-	const apiKey = options.apiKey;
-	if (!apiKey?.trim()) {
-		throw new Error("OpenRouter API key is required");
-	}
-	const url = `${OPENROUTER_BASE}/chat/completions`;
+	/** Optional. Sent as `reasoning.effort`; left out, the model reasons at its own default effort. */
+	reasoningEffort?: ReasoningEffort;
+}
+
+/** The JSON body of one chat-completions request. */
+export function chatRequestBody(options: Omit<ChatOptions, "apiKey">): Record<string, unknown> {
 	const body: Record<string, unknown> = {
 		model: options.modelId,
 		messages: options.messages,
@@ -47,13 +44,30 @@ export async function chat(options: {
 	if (options.response_format) {
 		body.response_format = options.response_format;
 	}
+	if (options.reasoningEffort) {
+		body.reasoning = { effort: options.reasoningEffort };
+	}
+	return body;
+}
+
+/**
+ * Call OpenRouter chat completions. On 429, retry with exponential backoff.
+ * Returns raw text, service time (TTFB), wall time, retry/backoff/throttle counts, usage and cost if present.
+ * apiKey is supplied by the client via request header (not from env).
+ */
+export async function chat(options: ChatOptions): Promise<ChatResult> {
+	const apiKey = options.apiKey;
+	if (!apiKey?.trim()) {
+		throw new Error("OpenRouter API key is required");
+	}
+	const url = `${OPENROUTER_BASE}/chat/completions`;
+	const body = chatRequestBody(options);
 	let lastError: Error | null = null;
 	let throttleEvents = 0;
 	let retryCount = 0;
 	let backoffMsTotal = 0;
 	const startWall = Date.now();
 	let firstByteAt: number | null = null;
-	let rawText = "";
 	let usage: { prompt_tokens: number; completion_tokens: number } | undefined;
 	let cost: number | undefined;
 
@@ -94,7 +108,7 @@ export async function chat(options: {
 				};
 			};
 			const content = data.choices?.[0]?.message?.content ?? "";
-			rawText = typeof content === "string" ? content : JSON.stringify(content);
+			const rawText = typeof content === "string" ? content : JSON.stringify(content);
 			// For non-streaming, we get the full response at once; TTFB ≈ wall time
 			firstByteAt = firstByteAt ?? Date.now();
 			if (data.usage) {

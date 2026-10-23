@@ -1,4 +1,4 @@
-import type { QuizOutput } from "$lib/types/quiz";
+import type { QuizOutput } from "#lib/types/quiz.js";
 
 const ALLOWED_QUESTION_TYPES = ["multiple_choice"] as const;
 

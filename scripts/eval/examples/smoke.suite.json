@@ -1,0 +1,11 @@
+{
+	"id": "smoke-2026-10-20",
+	"requests": [
+		{
+			"id": "hsa-rei-b4b",
+			"learning_objective": "CCSS.MATH.CONTENT.HSA.REI.B.4.B",
+			"request": "10 question quiz covering different aspects of this learning objective",
+			"tags": ["math", "blog-standard"]
+		}
+	]
+}
